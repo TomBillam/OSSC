@@ -1,0 +1,52 @@
+!***************************************************************************************
+!** Otago Superfluid Simulation Code
+!** Two-dimensional Gross-Pitaevskii simulation using Fourier pseudospectral method in a
+!** periodic, uniform domain, with 4/5 order adaptive Runge_Kutta timestepping.
+!**
+!** 2013  Thomas P. Billam, University of Otago
+!***************************************************************************************
+
+COMPILING
+
+The following flags seem to work well on FitzRoy:
+
+FC=xlf90_r
+
+FFLAGS="-O3 -qtune=pwr6 -qarch=pwr6 -q64 -qsmp=omp -qhot=simd -qenablevmx -I/opt/niwa/hdf5/AIX/1.8.10/serial/include -I/external/billamt/fftw_hot/include"
+
+LDFLAGS="-L/opt/niwa/hdf5/AIX/1.8.10/serial/lib -L/external/billamt/fftw_hot/lib"
+
+
+RUNNING
+
+Code evolves an initial condition in the form of a hdf5 file, say 'X.h5', where X is an *integer*. 
+
+Call the code via
+
+<executable_name> num_threads tol num_steps output_delta_t wisdom_filename input_file_number prog_run_time gamma
+
+The parameters are as follows (sensible values in brackets relate to the example file 0.h5 at /home/billamt/0.h5)
+
+num_threads:          Number of openmp threads to use [8-32]
+
+tol:                  Error tolerance for the Runge-Kutta scheme [1E-6]
+
+num_steps:            (Maximum) number of timesteps to attempt [100]
+
+output_delta_t:       Simulation time interval between outputs [10]
+
+wisdom_filename:      File containing fftw wisdom (if the file does not exist, or does not
+                      contain an appropriate plan, then the plan will be written by the 
+                      program when it has been created) [set to wherever you wish to save
+                      the plan]
+
+input_file_number:    Integer filename of the input file [0]
+
+prog_run_time:        Maximum number of wall-clock seconds to run for (program will exit 
+                      gracefully if it suspects the next timestep will lead to exceeding
+                      this limit) [set to however long you want to run a test for, e.g.,
+                      3600 for a 1hr test]
+
+gamma:                Damping parameter (part of the physics) [1E-4]
+
+
