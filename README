@@ -8,13 +8,13 @@
 
 COMPILING
 
-The following flags seem to work well on FitzRoy:
+The following flags seem to work on FitzRoy:
 
 FC=xlf90_r
 
-FFLAGS="-O3 -qtune=pwr6 -qarch=pwr6 -q64 -qsmp=omp -qhot=simd -qenablevmx -I/opt/niwa/hdf5/AIX/1.8.10/serial/include -I/external/billamt/fftw_hot/include"
+FFLAGS="-O3 -qtune=pwr6 -qarch=pwr6 -q64 -qsmp=omp -qhot=simd -qenablevmx -I/opt/niwa/hdf5/AIX/1.8.10/serial/include -I/opt/niwa/fftw/AIX/3.3.3/openmp/include"
 
-LDFLAGS="-L/opt/niwa/hdf5/AIX/1.8.10/serial/lib -L/external/billamt/fftw_hot/lib"
+LDFLAGS="-L/opt/niwa/hdf5/AIX/1.8.10/serial/lib -L/opt/niwa/fftw/AIX/3.3.3/openmp/lib"
 
 
 RUNNING
