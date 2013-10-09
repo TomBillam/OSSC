@@ -12,7 +12,6 @@ use types
 use output
 use evolution
 use, intrinsic :: iso_c_binding
-use fftw_3_3_2
 use omp_lib
 use hdf5
 implicit none
@@ -22,12 +21,10 @@ type (grid):: gd
 
 double precision:: g, mu, gam, output_delta_t, goal, time
 integer:: output_number, error, nthreads, input_file_number
-integer(C_INT) :: ret
 
-complex(C_DOUBLE_COMPLEX), pointer :: phi(:,:)
-type(C_PTR) :: p
+double complex, allocatable:: phi(:,:)
 
-type (transform_pair):: phi_transforms
+type (transform_pair):: phi_transforms !** N.B.: Still declaring this as I haven't removed the fftw plans from the function calls yet
 
 character(len=30):: filename
 character(len=255,kind=C_CHAR):: wisdom_file_name
@@ -91,26 +88,8 @@ nthreads = omp_get_num_threads()
 !$OMP END PARALLEL
 write(*,*) 'Running on ', nthreads, 'cores'
 
-!** Use openmp on ffts
-ret = fftw_init_threads()
-call fftw_plan_with_nthreads(nthreads)
 
-!** Allocate aligned array for fftw
-p = fftw_alloc_complex(int(gd%n%x * gd%n%y, C_SIZE_T))
-       call c_f_pointer(p, phi, [gd%n%x,gd%n%y])
-
-!** Try to find wisdom file
-wisdom_file_name = trim(adjustl(wisdom_file_name))
-ret = fftw_import_wisdom_from_filename( trim(wisdom_file_name)//C_NULL_CHAR)
-if (ret .eq. 0) then
-  write(*,*) 'error importing wisdom from specified file'
-end if
-write(*,*) 'Planning fast Fourier transforms...'
-phi_transforms%forward = fftw_plan_dft_2d(gd%n%y,gd%n%x, phi, phi, FFTW_FORWARD, FFTW_PATIENT)
-phi_transforms%backward = fftw_plan_dft_2d(gd%n%y,gd%n%x, phi, phi, FFTW_BACKWARD, FFTW_PATIENT)
-write(*,*) '...done.'
-ret = fftw_export_wisdom_to_filename( trim(wisdom_file_name)//C_NULL_CHAR)
-       if (ret .eq. 0) stop 'error exporting wisdom to file'
+allocate(phi(gd%n%x,gd%n%y))
 
 !** LOAD INPUT FILE
 call read_hdf5_named(filename,phi,gd,time)
@@ -125,11 +104,6 @@ mu = 1.0d0
 !** Evolve damped GPE
 call evolve_gpe_adaptive(phi, gd, phi_transforms, dk_sq, output_number, output_delta_t, &
             write_hdf5, goal, g, mu, gam, input_file_number, time, prog_start_time, prog_run_time)
-
-!** Tidy up **
-call fftw_destroy_plan(phi_transforms%forward)
-call fftw_destroy_plan(phi_transforms%backward)
-call fftw_free(p)
 
 ! Close FORTRAN interface.
 call h5close_f(error)

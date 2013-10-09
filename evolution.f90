@@ -15,13 +15,35 @@ private
 public:: evolve_gpe_adaptive
 double precision, allocatable:: karray(:,:)
 
+!** ESSL FFT arrays and parameters.
+!** Moved here from main since the planning overhead is so much smaller than for fftw
+!** TODO: drop the fftw plans from all the function calls
+double precision, allocatable:: aux1fwd(:), aux1bwd(:), aux2(:)
+integer:: naux1, naux2
+integer:: narr(2)
+integer, parameter:: isign_fwd(2) = (/1,1/), isign_bwd(2) = (/-1,-1/)
+integer, parameter:: incx(2) = (/1,1/), incy(2) = (/1,1/)
+
+!** Also make the working arrays module based: this may make a tiny performance saving over local arrays,
+!** plus it makes planning the transforms simpler
+double complex, allocatable:: phi_old(:,:)
+double complex, allocatable:: phi2(:,:)
+double complex, allocatable:: k1(:,:)
+double complex, allocatable:: k2(:,:)
+double complex, allocatable:: k3(:,:)
+double complex, allocatable:: k4(:,:)
+double complex, allocatable:: k5(:,:)
+double complex, allocatable:: k6(:,:)
+
+!** Count Number of Iterations
+integer:: iterationcount = 0
+
 contains
 
 
 subroutine evolve_gpe_adaptive(phi, gd, phi_transforms, dk_sq, output_number, output_delta_t, &
                    output_sub, goal, g, mu, gam, input_file_number, time, prog_start_time, prog_run_time, tol)
 use, intrinsic:: iso_c_binding
-use fftw_3_3_2
 use types
 use output
 use omp_lib
@@ -40,6 +62,7 @@ double precision:: delta_t
 integer:: i, j
 double precision:: step_start, step_finish, last_step_time, prog_time_remaining
 character(len=30):: currentstepfilename
+double precision:: evolution_start, evolution_finish
 currentstepfilename = 'CurrentStep.h5'
 
 !** Set momentum array for speedup
@@ -55,6 +78,27 @@ do j = 0, gd%n%y-1
 end do
 !$OMP END PARALLEL DO
 
+!** Set up ESSL transforms
+naux1 = ceiling(60000.0d0*dble(2) + 28.24d0 *dble(gd%n%x+gd%n%y))
+naux2 = ceiling(20000.0d0+dble(2*max(gd%n%x,gd%n%y)+256)*(64.0d0+17.12))
+narr(1) = gd%n%x
+narr(2) = gd%n%y
+allocate(aux1fwd(naux1))
+allocate(aux1bwd(naux1))
+allocate(aux2(naux2))
+allocate(phi_old(0:gd%n%x-1,0:gd%n%y-1))
+allocate(phi2(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k1(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k2(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k3(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k4(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k5(0:gd%n%x-1,0:gd%n%y-1))
+allocate(k6(0:gd%n%x-1,0:gd%n%y-1))
+!** N.B.: As I understand it, ESSL doesn't care which arrays I plan with, as long as I pass
+!** it arrays which have been allocated in the same fashion (and stick to either in-place or out-of-place as appropriate)
+CALL DCFTD (1, 2, phi2, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
+CALL DCFTD (1, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
+
 
 !** Set initial timestep and time
 delta_t = 0.01d0*cfl_timestep(gd%delta)
@@ -65,6 +109,7 @@ if (present(tol)) then
   !
 else
   !** Evolve for set number of steps
+  evolution_start = omp_get_wtime()
   do i = 1, output_number
     step_start = omp_get_wtime()
     call step_adaptive(phi, gd, phi_transforms, time, time+output_delta_t, delta_t, goal, g, gam)
@@ -80,14 +125,17 @@ else
       exit
     end if
   end do
+  evolution_finish = omp_get_wtime()
+  write(*,*) 'Did', iterationcount, 'iterations in', evolution_finish-evolution_start, 'seconds'
 end if
+
+deallocate(phi_old, k1, k2, k3, k4, k5, k6, phi2)
 
 end subroutine
 
 
 subroutine step_adaptive(phi, gd, pt, time, end_time, delta_t, goal, g, gam, tol)
 use, intrinsic:: iso_c_binding
-use fftw_3_3_2
 use types
 use output
 implicit none
@@ -97,13 +145,6 @@ type (transform_pair), intent(in):: pt
 double precision, intent(inout):: time, delta_t
 double precision, intent(in):: end_time, goal, g, gam
 double precision, optional, intent(in):: tol
-double complex:: phi_old(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k1(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k2(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k3(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k4(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k5(0:gd%n%x-1,0:gd%n%y-1)
-double complex:: k6(0:gd%n%x-1,0:gd%n%y-1)
 logical:: can_has_exit !** Keep track of if we might make a successful final timestep
 double precision:: error, start_time, conv
 integer:: i,j
@@ -136,6 +177,9 @@ double precision, parameter:: d3 = 18575.0d0/48384.0d0
 double precision, parameter:: d4 = 13525.0d0/55296.0d0
 double precision, parameter:: d5 = 277.0d0/14336.0d0
 double precision, parameter:: d6 = 1.0d0/4.0d0
+
+!** Increment iteration count
+iterationcount = iterationcount + 1
 
 old_norm = 0.0d0
 oldmax = 0.0d0
@@ -172,7 +216,7 @@ do
   !$OMP END PARALLEL DO
   
   !** Obtain k1 coefficients 
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, phi_old, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -180,20 +224,19 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k1(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi(i,j) &
+      k1(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(phi_old(i,j))**2)*phi_old(i,j))
       k2(i,j) = phi_old(i,j) + b21*k1(i,j)
-      phi(i,j) = k2(i,j)
     end do
   end do
   !$OMP END PARALLEL DO
 
   !** Obtain k2 coefficients
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, k2, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -201,20 +244,19 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k2(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi(i,j) &
+      k2(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(k2(i,j))**2)*k2(i,j))
       k3(i,j) = phi_old(i,j) + b31*k1(i,j) + b32*k2(i,j)
-      phi(i,j)=k3(i,j)
     end do
   end do
   !$OMP END PARALLEL DO
 
   !** Obtain k3 coefficients
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, k3, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -222,20 +264,19 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k3(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi(i,j) &
+      k3(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(k3(i,j))**2)*k3(i,j))
       k4(i,j) = phi_old(i,j) + b41*k1(i,j) + b42*k2(i,j) + b43*k3(i,j)
-      phi(i,j) = k4(i,j)
     end do
   end do
   !$OMP END PARALLEL DO
 
   !** Obtain k4 coefficients
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, k4, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -243,20 +284,19 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k4(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi(i,j) &
+      k4(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(k4(i,j))**2)*k4(i,j))
       k5(i,j) = phi_old(i,j) + b51*k1(i,j) + b52*k2(i,j) + b53*k3(i,j) + b54*k4(i,j)
-      phi(i,j) = k5(i,j)
     end do
   end do
   !$OMP END PARALLEL DO
 
   !** Obtain k5 coefficients
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, k5, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -264,20 +304,19 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k5(i,j) = -(0.0d0,1.0d0)*dcmplx(1.d0,-gam)*delta_t * (phi(i,j) &
+      k5(i,j) = -(0.0d0,1.0d0)*dcmplx(1.d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(k5(i,j))**2)*k5(i,j))
       k6(i,j) = phi_old(i,j) + b61*k1(i,j) + b62*k2(i,j) + b63*k3(i,j) + b64*k4(i,j) + b65*k5(i,j)
-      phi(i,j) = k6(i,j)
     end do
   end do
   !$OMP END PARALLEL DO
 
   !** Obtain k6 coefficients
-  call fftw_execute_dft(pt%forward, phi, phi)
+  CALL DCFTD (0, 2, k6, incx, 1, phi, incy, 1, narr, 1, isign_fwd, 1.0d0, aux1fwd, naux1, aux2, naux2)
   !$OMP PARALLEL DO private(i)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
@@ -285,13 +324,13 @@ do
     end do
   end do
   !$OMP END PARALLEL DO
-  call fftw_execute_dft(pt%backward, phi, phi)
+  CALL DCFTD (0, 2, phi, incx, 1, phi2, incy, 1, narr, 1, isign_bwd, 1.0d0, aux1bwd, naux1, aux2, naux2)
   error = 0.0d0
   newmax = 0.0d0
   !$OMP PARALLEL DO private(i) reduction(MAX:error) reduction(MAX:newmax)
   do j = 0, gd%n%y-1
     do i = 0, gd%n%x-1
-      k6(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi(i,j) &
+      k6(i,j) = -(0.0d0,1.0d0)*dcmplx(1.0d0,-gam)*delta_t * (phi2(i,j) &
                 + (g*abs(k6(i,j))**2)*k6(i,j))
       phi(i,j) = phi_old(i,j) + c1*k1(i,j) + c2*k2(i,j) + c3*k3(i,j) + c4*k4(i,j) &
                               + c5*k5(i,j) + c6*k6(i,j) !** Fifth-order accurate
