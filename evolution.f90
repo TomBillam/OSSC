@@ -178,8 +178,6 @@ double precision, parameter:: d4 = 13525.0d0/55296.0d0
 double precision, parameter:: d5 = 277.0d0/14336.0d0
 double precision, parameter:: d6 = 1.0d0/4.0d0
 
-!** Increment iteration count
-iterationcount = iterationcount + 1
 
 old_norm = 0.0d0
 oldmax = 0.0d0
@@ -197,6 +195,8 @@ old_norm = old_norm*gd%delta%x*gd%delta%y
 start_time = time
 
 do
+  !** Increment iteration count
+  iterationcount = iterationcount + 1
   if (.not. present(tol)) then
     !** In real time, check if we might be able to make a successful final timestep
     if (end_time-time .le. delta_t) then
