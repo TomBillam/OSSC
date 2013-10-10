@@ -15,6 +15,9 @@ private
 public:: evolve_gpe_adaptive
 double precision, allocatable:: karray(:,:)
 
+!** Count Number of Iterations
+integer:: iterationcount = 0
+
 contains
 
 
@@ -40,6 +43,7 @@ double precision:: delta_t
 integer:: i, j
 double precision:: step_start, step_finish, last_step_time, prog_time_remaining
 character(len=30):: currentstepfilename
+double precision:: evolution_start, evolution_finish
 currentstepfilename = 'CurrentStep.h5'
 
 !** Set momentum array for speedup
@@ -65,6 +69,7 @@ if (present(tol)) then
   !
 else
   !** Evolve for set number of steps
+  evolution_start = omp_get_wtime()
   do i = 1, output_number
     step_start = omp_get_wtime()
     call step_adaptive(phi, gd, phi_transforms, time, time+output_delta_t, delta_t, goal, g, gam)
@@ -80,6 +85,8 @@ else
       exit
     end if
   end do
+  evolution_finish = omp_get_wtime()
+  write(*,*) 'Did', iterationcount, 'iterations in', evolution_finish-evolution_start, 'seconds'
 end if
 
 end subroutine
@@ -153,6 +160,8 @@ old_norm = old_norm*gd%delta%x*gd%delta%y
 start_time = time
 
 do
+  !** Increment iteration count
+  iterationcount = iterationcount + 1
   if (.not. present(tol)) then
     !** In real time, check if we might be able to make a successful final timestep
     if (end_time-time .le. delta_t) then
