@@ -20,9 +20,8 @@ double precision, allocatable:: karray(:,:)
 !** TODO: drop the fftw plans from all the function calls
 double precision, allocatable:: aux1fwd(:), aux1bwd(:), aux2(:)
 integer:: naux1, naux2
-integer:: narr(2)
+integer:: narr(2), incx(2), incy(2)
 integer, parameter:: isign_fwd(2) = (/1,1/), isign_bwd(2) = (/-1,-1/)
-integer, parameter:: incx(2) = (/1,1/), incy(2) = (/1,1/)
 
 !** Also make the working arrays module based: this may make a tiny performance saving over local arrays,
 !** plus it makes planning the transforms simpler
@@ -83,6 +82,10 @@ naux1 = ceiling(60000.0d0*dble(2) + 28.24d0 *dble(gd%n%x+gd%n%y))
 naux2 = ceiling(20000.0d0+dble(2*max(gd%n%x,gd%n%y)+256)*(64.0d0+17.12))
 narr(1) = gd%n%x
 narr(2) = gd%n%y
+incx(1) = 1
+incx(2) = gd%n%x
+incy(1) = 1
+incy(2) = gd%n%x
 allocate(aux1fwd(naux1))
 allocate(aux1bwd(naux1))
 allocate(aux2(naux2))
